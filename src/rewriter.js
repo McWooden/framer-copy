@@ -230,6 +230,105 @@ class UrlRewriter {
   }
 
   /**
+   * Rewrite absolute URLs inside JavaScript bundles.
+   *
+   * Framer sites use React + Framer Motion. Animations fail locally because:
+   *  1. Webpack/Vite sets a __webpack_public_path__ or import.meta.url pointing to the CDN
+   *  2. Dynamic import() calls reference absolute chunk URLs
+   *  3. String literals in JS reference image/font CDN URLs
+   *
+   * We fix all of these by replacing every known absolute URL with its local relative path.
+   *
+   * @param {string} js - The JS bundle content
+   * @param {string} localJsPath - The local path of this JS file (relative to output)
+   * @returns {string} Rewritten JS
+   */
+  rewriteJs(js, localJsPath) {
+    let result = js;
+
+    // ── 1. Rewrite all string-literal URLs we have in our map ─────────────────
+    // Sort by URL length descending to avoid partial replacements
+    const entries = Array.from(this.urlMap.entries()).sort(
+      ([a], [b]) => b.length - a.length
+    );
+
+    for (const [originalUrl, localResourcePath] of entries) {
+      if (!originalUrl.startsWith('http')) continue;
+
+      const rel = relativePath(localJsPath, localResourcePath);
+
+      // Replace with double quotes
+      result = result.split(`"${originalUrl}"`).join(`"${rel}"`);
+      // Replace with single quotes
+      result = result.split(`'${originalUrl}'`).join(`'${rel}'`);
+      // Replace without quotes (template literals, bare assignment)
+      // Only if surrounded by non-URL-safe chars to avoid partial matches
+      const escaped = originalUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      result = result.replace(
+        new RegExp(`(?<=[=,(\`])${escaped}(?=[),\`])`, 'g'),
+        rel
+      );
+    }
+
+    // ── 2. Rewrite webpack public path ────────────────────────────────────────
+    // Pattern: e.p="https://framerusercontent.com/..."
+    // Pattern: __webpack_public_path__="https://..."
+    // Pattern: r.p="https://..."
+    result = result.replace(
+      /([a-zA-Z_$][\w$]*\.p\s*=\s*["'])(https?:\/\/[^"']+)(["'])/g,
+      (match, prefix, url, suffix) => {
+        // Point public path to the js/ directory relative to this file
+        const jsDir = localJsPath.includes('/') 
+          ? localJsPath.split('/').slice(0, -1).join('/') + '/'
+          : './';
+        const rel = relativePath(localJsPath, 'js/');
+        return `${prefix}${rel}${suffix}`;
+      }
+    );
+
+    // __webpack_public_path__ style
+    result = result.replace(
+      /(__webpack_public_path__|__publicPath__)\s*=\s*["'](https?:\/\/[^"']+)["']/g,
+      (match, varName) => {
+        const rel = relativePath(localJsPath, 'js/');
+        return `${varName}="${rel}"`;
+      }
+    );
+
+    // ── 3. Rewrite dynamic import() with absolute URLs ────────────────────────
+    // Pattern: import("https://framerusercontent.com/modules/abc.js")
+    result = result.replace(
+      /import\s*\(\s*["'](https?:\/\/[^"']+\.m?js[^"']*)["']\s*\)/g,
+      (match, url) => {
+        const localPath = this.urlMap.get(url) ||
+          this.urlMap.get(url.replace('https://', 'http://'));
+        if (localPath) {
+          const rel = relativePath(localJsPath, localPath);
+          return `import("${rel}")`;
+        }
+        return match;
+      }
+    );
+
+    // ── 4. Rewrite framerusercontent.com image/font references ────────────────
+    // These are often baked into JS as image src strings for Framer CMS content
+    result = result.replace(
+      /(["'])(https?:\/\/(?:framerusercontent|assets\.framer)\.com\/[^"'\s]+)(["'])/g,
+      (match, q1, url, q2) => {
+        const localPath = this.urlMap.get(url) ||
+          this.urlMap.get(url.replace('https://', 'http://'));
+        if (localPath) {
+          const rel = relativePath(localJsPath, localPath);
+          return `${q1}${rel}${q2}`;
+        }
+        return match;
+      }
+    );
+
+    return result;
+  }
+
+  /**
    * Rewrite srcset attribute
    */
   rewriteSrcset(srcset, localFilePath) {

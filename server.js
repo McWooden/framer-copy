@@ -6,6 +6,8 @@ const BrowserCapture = require('./src/browser');
 const ResourceDownloader = require('./src/downloader');
 const UrlRewriter = require('./src/rewriter');
 const PageCrawler = require('./src/crawler');
+const SiteTidier = require('./src/tidier');
+const SiteRestructurer = require('./src/restructurer');
 
 const app = express();
 const PORT = 3456;
@@ -77,9 +79,16 @@ app.post('/api/clone', (req, res) => {
 
   // Run clone in background
   runClone({ url, pages, noJs: noJs || false, wait: wait || 3000, outputDir, jobId, send })
-    .then(() => {
+    .then(async () => {
       // Store job for download
       jobs.set(jobId, { outputDir, hostname, createdAt: Date.now() });
+
+      // Auto-generate REFACTOR_PROMPT.md silently
+      try {
+        const restructurer = new SiteRestructurer(outputDir, { log: () => {} });
+        await restructurer.generateAndSavePrompt();
+      } catch { /* non-fatal */ }
+
       send('complete', { jobId, message: 'Clone complete! Ready to download.' });
       res.end();
     })
@@ -90,6 +99,140 @@ app.post('/api/clone', (req, res) => {
 
   req.on('close', () => {
     // Client disconnected — cleanup if needed
+  });
+});
+
+// ─────────────────────────────────────────────
+// API: Tidy an existing cloned site (SSE)
+// ─────────────────────────────────────────────
+app.post('/api/tidy/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = jobs.get(jobId);
+  const opts = req.body || {};
+
+  if (!job) return res.status(404).json({ error: 'Job not found.' });
+  if (!fs.existsSync(job.outputDir)) return res.status(404).json({ error: 'Clone output not found.' });
+
+  // SSE headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+
+  const send = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const tidier = new SiteTidier(job.outputDir, {
+    mergeCSS: opts.mergeCSS !== false,
+    removeUnused: opts.removeUnused !== false,
+    renameFiles: opts.renameFiles !== false,
+    stripFramerRuntime: opts.stripFramerRuntime !== false,
+    log: send,
+  });
+
+  tidier.tidy()
+    .then((result) => {
+      send('tidy-summary', result);
+      send('complete', { message: 'Tidy complete!' });
+      res.end();
+    })
+    .catch((err) => {
+      send('error', { message: err.message });
+      res.end();
+    });
+});
+
+// API: Convert to Next.js Latest (SSE)
+// lang: 'ts' | 'js'
+// ─────────────────────────────────────────────
+app.post('/api/restructure/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = jobs.get(jobId);
+  const { lang = 'ts' } = req.body; // 'ts' or 'js'
+
+  if (!job) return res.status(404).json({ error: 'Job not found.' });
+  if (!fs.existsSync(job.outputDir)) return res.status(404).json({ error: 'Clone output not found.' });
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+
+  const send = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const targetDir = job.outputDir + `_nextjs-${lang}_${Date.now()}`;
+  const restructurer = new SiteRestructurer(job.outputDir, { lang, log: send });
+
+  restructurer.restructure(targetDir)
+    .then((result) => {
+      // Register as a new downloadable job
+      const newJobId = `job_${Date.now()}`;
+      jobs.set(newJobId, {
+        outputDir: targetDir,
+        hostname: `${job.hostname}-nextjs`,
+        createdAt: Date.now(),
+      });
+      send('restructure-done', { ...result, downloadJobId: newJobId, lang });
+      send('complete', { message: 'Next.js project ready!' });
+      res.end();
+    })
+    .catch(err => {
+      send('error', { message: err.message });
+      res.end();
+    });
+});
+
+// Helper: get directory size recursively
+function getDirSize(dirPath) {
+  let size = 0;
+  if (!fs.existsSync(dirPath)) return 0;
+  try {
+    const files = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const file of files) {
+      const filePath = path.join(dirPath, file.name);
+      if (file.isDirectory()) {
+        size += getDirSize(filePath);
+      } else {
+        const stats = fs.statSync(filePath);
+        size += stats.size;
+      }
+    }
+  } catch (e) {}
+  return size;
+}
+
+// Helper: format bytes
+function formatBytes(bytes) {
+  if (!bytes) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
+
+// ─────────────────────────────────────────────
+// API: Get job status & metadata (e.g. size)
+// ─────────────────────────────────────────────
+app.get('/api/job-status/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = jobs.get(jobId);
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+  if (!fs.existsSync(job.outputDir)) {
+    return res.status(404).json({ error: 'Clone output not found' });
+  }
+  const sizeBytes = getDirSize(job.outputDir);
+  res.json({
+    jobId,
+    hostname: job.hostname,
+    size: formatBytes(sizeBytes),
+    sizeBytes
   });
 });
 
@@ -255,8 +398,32 @@ async function runClone({ url, pages, noJs, wait, outputDir, jobId, send }) {
       }
     }
 
+    // Rewrite JS — fixes Framer Motion animations by patching:
+    //   • webpack/vite public path variables
+    //   • dynamic import() chunk URLs
+    //   • CDN image/font string literals baked into bundles
+    send('status', { message: 'Patching JS bundles for animations...', phase: 'rewrite', progress: 80 });
+
+    const jsFiles = Array.from(urlMap.entries()).filter(([_, lp]) => lp.startsWith('js/'));
+    let jsPatched = 0;
+    for (const [origUrl, localPath] of jsFiles) {
+      const fullPath = path.join(outputDir, localPath);
+      if (fs.existsSync(fullPath)) {
+        try {
+          let js = fs.readFileSync(fullPath, 'utf-8');
+          const patched = rewriter.rewriteJs(js, localPath);
+          if (patched !== js) {
+            fs.writeFileSync(fullPath, patched, 'utf-8');
+            jsPatched++;
+          }
+        } catch {
+          // skip binary or unreadable files
+        }
+      }
+    }
+
     send('status', {
-      message: 'URL rewriting complete',
+      message: `URL rewriting complete — patched ${jsFiles.length} JS files (${jsPatched} modified)`,
       phase: 'rewrite',
       progress: 100,
     });

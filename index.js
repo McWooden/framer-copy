@@ -302,7 +302,30 @@ async function main() {
       }
     }
 
-    console.log(chalk.green(`    ✓ Rewrote URLs in ${pageResults.size} page(s) and ${cssFiles.length} CSS file(s)`));
+    // Rewrite JS files — patches Framer Motion animation chunks
+    console.log(chalk.gray('    Patching JS bundles for animations...'));
+    const jsFiles = Array.from(urlMap.entries()).filter(([_, localPath]) =>
+      localPath.startsWith('js/')
+    );
+
+    let jsPatched = 0;
+    for (const [originalUrl, localPath] of jsFiles) {
+      const fullPath = path.join(outputDir, localPath);
+      if (fs.existsSync(fullPath)) {
+        try {
+          let js = fs.readFileSync(fullPath, 'utf-8');
+          const patched = rewriter.rewriteJs(js, localPath);
+          if (patched !== js) {
+            fs.writeFileSync(fullPath, patched, 'utf-8');
+            jsPatched++;
+          }
+        } catch {
+          // skip unreadable files
+        }
+      }
+    }
+
+    console.log(chalk.green(`    ✓ Rewrote URLs in ${pageResults.size} page(s), ${cssFiles.length} CSS file(s), ${jsPatched}/${jsFiles.length} JS bundle(s)`));
     console.log('');
 
     // ─── Phase 5: Summary ─────────────────────

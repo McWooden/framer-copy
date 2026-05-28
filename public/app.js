@@ -9,8 +9,11 @@
   const state = {
     pages: [],
     isDiscovering: false,
-    isCloning: false,
-    currentJobId: null,
+    isProcessing: false,
+    currentJobId: null,      // The baseline clone (might be tidied)
+    downloadJobId: null,     // The job ID for the main download button
+    convertedJobs: {},       // Cache for alternate formats: { 'normal': jobId, 'nextjs-js': jobId, 'nextjs-ts': jobId }
+    cloneSummary: null,      // Cached summary statistics
   };
 
   // ─── DOM Elements ────────────────────────
@@ -23,24 +26,37 @@
   const discoverBtnText = $('#discoverBtnText');
   const addUrlBtn = $('#addUrlBtn');
   const pageList = $('#pageList');
-  const pageListWrapper = $('#pageListWrapper');
   const emptyState = $('#emptyState');
+  const pageListWrapper = $('#pageListWrapper');
   const pageCountNum = $('#pageCountNum');
-  const cloneBtn = $('#cloneBtn');
-  const cloneBtnText = $('#cloneBtnText');
+  const processBtn = $('#processBtn');
+  const processBtnText = $('#processBtnText');
+  
   const progressPanel = $('#progressPanel');
   const progressPhase = $('#progressPhase');
   const progressDetail = $('#progressDetail');
   const progressBar = $('#progressBar');
   const progressLog = $('#progressLog');
+  
   const resultPanel = $('#resultPanel');
   const statPages = $('#statPages');
   const statResources = $('#statResources');
   const statSize = $('#statSize');
   const resultPageList = $('#resultPageList');
-  const downloadBtn = $('#downloadBtn');
+  const mainDownloadBtn = $('#mainDownloadBtn');
   const resetBtn = $('#resetBtn');
   const toastContainer = $('#toastContainer');
+
+  // Redesigned elements
+  const showOtherFormatsBtn = $('#showOtherFormatsBtn');
+  const otherFormatsDrawer = $('#otherFormatsDrawer');
+  const downloadOtherStaticBtn = $('#downloadOtherStaticBtn');
+  const downloadOtherNextJsBtn = $('#downloadOtherNextJsBtn');
+  const downloadOtherNextTsBtn = $('#downloadOtherNextTsBtn');
+  const otherFormatsProgressArea = $('#otherFormatsProgressArea');
+  const otherPhase = $('#otherPhase');
+  const otherBar = $('#otherBar');
+  const otherLog = $('#otherLog');
 
   // ─── Mouse tracking for glow effect ──────
   document.addEventListener('mousemove', (e) => {
@@ -50,6 +66,17 @@
       const y = ((e.clientY - rect.top) / rect.height) * 100;
       card.style.setProperty('--mouse-x', x + '%');
       card.style.setProperty('--mouse-y', y + '%');
+    });
+  });
+
+  // ─── Structure Selection Grid ────────────
+  const structureCards = $$('.structure-card');
+  structureCards.forEach(card => {
+    card.addEventListener('click', () => {
+      structureCards.forEach(c => c.classList.remove('structure-card--active'));
+      card.classList.add('structure-card--active');
+      const radio = card.querySelector('input[type="radio"]');
+      if (radio) radio.checked = true;
     });
   });
 
@@ -82,11 +109,9 @@
     url = url.trim().replace(/\/$/, '');
     if (!url) return;
 
-    // Basic validation
     try {
       new URL(url);
     } catch {
-      // Try adding https
       try {
         url = 'https://' + url;
         new URL(url);
@@ -96,7 +121,6 @@
       }
     }
 
-    // Check duplicates
     if (state.pages.includes(url)) {
       showToast('Page already in list', 'info');
       return;
@@ -104,25 +128,18 @@
 
     state.pages.push(url);
     renderPageList();
-    updateCloneButton();
   }
 
   function removePage(index) {
     state.pages.splice(index, 1);
     renderPageList();
-    updateCloneButton();
-  }
-
-  function clearPages() {
-    state.pages = [];
-    renderPageList();
-    updateCloneButton();
   }
 
   function renderPageList() {
     if (state.pages.length === 0) {
       emptyState.style.display = 'block';
       pageListWrapper.style.display = 'none';
+      pageCountNum.textContent = '0';
       return;
     }
 
@@ -144,11 +161,6 @@
       .join('');
   }
 
-  function updateCloneButton() {
-    cloneBtn.disabled = state.pages.length === 0 || state.isCloning;
-  }
-
-  // Expose removePage globally for inline onclick
   window.__removePage = removePage;
 
   // ─── Discover Pages ──────────────────────
@@ -173,16 +185,13 @@
 
       const data = await resp.json();
 
-      if (!resp.ok) {
-        throw new Error(data.error || 'Discovery failed');
-      }
+      if (!resp.ok) throw new Error(data.error || 'Discovery failed');
 
       if (data.pages.length === 0) {
         showToast('No pages found in sitemap. Try adding URLs manually.', 'info');
         return;
       }
 
-      // Add all discovered pages (avoiding duplicates)
       let added = 0;
       for (const page of data.pages) {
         const normalized = page.replace(/\/$/, '');
@@ -193,210 +202,326 @@
       }
 
       renderPageList();
-      updateCloneButton();
       showToast(`Discovered ${added} page(s) from sitemap!`, 'success');
+      
+      // Auto open details drawer if pages are discovered
+      $('#pagesCard').open = true;
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
       state.isDiscovering = false;
       discoverBtn.disabled = false;
-      discoverBtnText.innerHTML = '🔍 Discover All Pages';
+      discoverBtnText.innerHTML = '🔍 Discover Pages';
     }
   }
 
-  // ─── Clone Site ──────────────────────────
-  async function startClone() {
-    if (state.pages.length === 0) return;
+  // ─── Helper to fetch job size metadata ────
+  async function updateSizeMetadata(jobId) {
+    try {
+      const res = await fetch(`/api/job-status/${jobId}`);
+      if (res.ok) {
+        const data = await res.json();
+        statSize.textContent = data.size;
+      }
+    } catch (err) {
+      console.error('Failed to load size metadata', err);
+    }
+  }
 
-    const siteUrl = siteUrlInput.value.trim() || state.pages[0];
+  // ─── Sequential Processing Pipeline ──────
+  async function processProject() {
+    const siteUrl = siteUrlInput.value.trim();
+    if (!siteUrl && state.pages.length === 0) {
+      showToast('Please enter a Website URL', 'error');
+      siteUrlInput.focus();
+      return;
+    }
+
+    // If queue is empty, auto-add input site URL
+    if (state.pages.length === 0) {
+      addPage(siteUrl);
+    }
+
+    const structure = document.querySelector('input[name="folderStructure"]:checked').value;
+    const needTidy = $('#optNeedTidy').checked;
     const noJs = $('#optNoJs').checked;
 
-    state.isCloning = true;
-    cloneBtn.disabled = true;
-    cloneBtnText.innerHTML = '<span class="spinner spinner--sm"></span> Cloning...';
+    state.isProcessing = true;
+    toggleInputs(true);
 
-    // Show progress panel
     progressPanel.classList.add('active');
     resultPanel.classList.remove('active');
+    otherFormatsDrawer.style.display = 'none';
     progressLog.innerHTML = '';
     progressBar.style.width = '0%';
     progressBar.classList.remove('indeterminate');
 
     try {
-      const resp = await fetch('/api/clone', {
+      // ── Stage 1: Clone ──
+      appendLog('🌐 Initializing clone process...', 'info');
+      const cloneResponse = await fetch('/api/clone', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: siteUrl,
-          pages: state.pages,
-          noJs,
-        }),
+        body: JSON.stringify({ url: state.pages[0], pages: state.pages, noJs }),
       });
 
-      // Read SSE stream
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
+      await handleSSE(cloneResponse, progressPhase, progressBar, progressLog, (event, data) => {
+        if (event === 'summary') state.cloneSummary = data;
+        if (event === 'complete') state.currentJobId = data.jobId;
+      });
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      if (!state.currentJobId) throw new Error('Clone completed but Job ID was not received.');
 
-        buffer += decoder.decode(value, { stream: true });
+      state.convertedJobs = { 'normal': state.currentJobId };
 
-        // Parse SSE events
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // Keep incomplete line in buffer
+      // ── Stage 2: Tidy (Optional) ──
+      if (needTidy) {
+        appendLog('🧹 Starting file tidy process...', 'info');
+        progressBar.style.width = '0%';
+        const tidyResponse = await fetch(`/api/tidy/${state.currentJobId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mergeCSS: true,
+            removeUnused: true,
+            renameFiles: true,
+            stripFramerRuntime: true,
+          }),
+        });
 
-        let eventType = null;
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith('data: ') && eventType) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              handleSSEEvent(eventType, data);
-            } catch {}
-            eventType = null;
+        await handleSSE(tidyResponse, progressPhase, progressBar, progressLog);
+      }
+
+      // ── Stage 3: Restructure (Optional) ──
+      if (structure === 'nextjs-js' || structure === 'nextjs-ts') {
+        const lang = structure === 'nextjs-ts' ? 'ts' : 'js';
+        appendLog(`⚛️ Converting static clone to Next.js (${lang.toUpperCase()})...`, 'info');
+        progressBar.style.width = '0%';
+
+        const convertResponse = await fetch(`/api/restructure/${state.currentJobId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lang }),
+        });
+
+        await handleSSE(convertResponse, progressPhase, progressBar, progressLog, (event, data) => {
+          if (event === 'restructure-done') {
+            state.downloadJobId = data.downloadJobId;
+            state.convertedJobs[structure] = data.downloadJobId;
           }
+        });
+      } else {
+        state.downloadJobId = state.currentJobId;
+      }
+
+      // ── Finish ──
+      appendLog('✨ All stages complete!', 'success');
+      showToast('Processing complete!', 'success');
+
+      // Fetch size metadata
+      await updateSizeMetadata(state.downloadJobId);
+
+      // Render summary info
+      if (state.cloneSummary) {
+        statPages.textContent = state.cloneSummary.pages;
+        statResources.textContent = state.cloneSummary.resources;
+        resultPageList.innerHTML = state.cloneSummary.pageList
+          .map((p) => {
+            const displayUrl = p.url.replace(/^https?:\/\//, '');
+            return `
+              <li class="page-item">
+                <span class="page-item__icon">✅</span>
+                <span class="page-item__url" title="${escapeHtml(p.url)}">${escapeHtml(displayUrl)}</span>
+                <span style="color: var(--text-muted); font-size: 0.72rem; white-space: nowrap;">→ ${escapeHtml(p.localPath)}</span>
+              </li>
+            `;
+          })
+          .join('');
+      }
+
+      progressPanel.classList.remove('active');
+      resultPanel.classList.add('active');
+
+      setTimeout(() => {
+        resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 300);
+
+    } catch (err) {
+      showToast('Processing failed: ' + err.message, 'error');
+      appendLog('✖ Error: ' + err.message, 'error');
+    } finally {
+      state.isProcessing = false;
+      toggleInputs(false);
+    }
+  }
+
+  // ─── SSE Stream Reader ───────────────────
+  async function handleSSE(response, labelEl, barEl, logEl, onEvent) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      let eventType = null;
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ') && eventType) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            
+            // Handle common status events
+            if (eventType === 'status') {
+              labelEl.textContent = data.message || 'Processing...';
+              if (data.progress !== undefined) {
+                barEl.style.width = data.progress + '%';
+              }
+              appendLogElement(logEl, data.message);
+            } else if (eventType === 'warning') {
+              appendLogElement(logEl, '⚠ ' + data.message, 'warning');
+            } else if (eventType === 'error') {
+              appendLogElement(logEl, '✖ ' + data.message, 'error');
+              throw new Error(data.message);
+            }
+
+            if (onEvent) onEvent(eventType, data);
+          } catch (e) {
+            if (eventType === 'error') throw e;
+          }
+          eventType = null;
         }
       }
-    } catch (err) {
-      showToast('Clone failed: ' + err.message, 'error');
-      appendLog('Error: ' + err.message, 'error');
-    } finally {
-      state.isCloning = false;
-      cloneBtn.disabled = false;
-      cloneBtnText.innerHTML = '🚀 Start Cloning';
     }
-  }
-
-  // ─── SSE Event Handler ───────────────────
-  function handleSSEEvent(event, data) {
-    switch (event) {
-      case 'status':
-        updateProgress(data);
-        break;
-
-      case 'warning':
-        appendLog('⚠ ' + data.message, 'warning');
-        break;
-
-      case 'error':
-        appendLog('✖ ' + data.message, 'error');
-        showToast(data.message, 'error');
-        break;
-
-      case 'summary':
-        showSummary(data);
-        break;
-
-      case 'complete':
-        state.currentJobId = data.jobId;
-        progressPanel.classList.remove('active');
-        showToast('Clone complete!', 'success');
-        break;
-    }
-  }
-
-  function updateProgress(data) {
-    // Update phase label
-    const phaseLabels = {
-      init: '🔧 Initializing...',
-      capture: '📸 Capturing Pages',
-      download: '📥 Downloading Resources',
-      rewrite: '✏️ Rewriting URLs',
-    };
-
-    progressPhase.textContent = phaseLabels[data.phase] || data.phase;
-
-    // Update progress bar
-    if (data.progress !== undefined) {
-      progressBar.classList.remove('indeterminate');
-      progressBar.style.width = data.progress + '%';
-    }
-
-    // Update detail text
-    if (data.current && data.total) {
-      progressDetail.textContent = `${data.current} / ${data.total}`;
-    } else if (data.size) {
-      progressDetail.textContent = data.size;
-    } else {
-      progressDetail.textContent = data.progress !== undefined ? data.progress + '%' : '';
-    }
-
-    // Append to log
-    appendLog(data.message);
   }
 
   function appendLog(message, type = '') {
+    appendLogElement(progressLog, message, type);
+  }
+
+  function appendLogElement(logEl, message, type = '') {
     const line = document.createElement('div');
     line.className = `log-line${type ? ` log-line--${type}` : ''}`;
     line.textContent = message;
-    progressLog.appendChild(line);
-    progressLog.scrollTop = progressLog.scrollHeight;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
   }
 
-  // ─── Show Results ────────────────────────
-  function showSummary(data) {
-    statPages.textContent = data.pages;
-    statResources.textContent = data.resources;
-    statSize.textContent = data.size;
+  function toggleInputs(disable) {
+    siteUrlInput.disabled = disable;
+    discoverBtn.disabled = disable;
+    manualUrlInput.disabled = disable;
+    addUrlBtn.disabled = disable;
+    processBtn.disabled = disable;
+    
+    $$('input[name="folderStructure"]').forEach(radio => radio.disabled = disable);
+    $$('.structure-card').forEach(card => card.style.pointerEvents = disable ? 'none' : 'auto');
+    $('#optNeedTidy').disabled = disable;
+    $('#optNoJs').disabled = disable;
 
-    // Render page list
-    resultPageList.innerHTML = data.pageList
-      .map((p) => {
-        const displayUrl = p.url.replace(/^https?:\/\//, '');
-        return `
-          <li class="page-item">
-            <span class="page-item__icon">✅</span>
-            <span class="page-item__url" title="${escapeHtml(p.url)}">${escapeHtml(displayUrl)}</span>
-            <span style="color: var(--text-muted); font-size: 0.75rem; white-space: nowrap;">→ ${escapeHtml(p.localPath)}</span>
-          </li>
-        `;
-      })
-      .join('');
-
-    resultPanel.classList.add('active');
-
-    // Scroll to result
-    setTimeout(() => {
-      resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 300);
+    if (disable) {
+      processBtnText.innerHTML = '<span class="spinner spinner--sm"></span> Processing...';
+    } else {
+      processBtnText.textContent = '🚀 Process Cloner';
+    }
   }
 
-  // ─── Download ZIP ────────────────────────
-  function downloadZip() {
-    if (!state.currentJobId) {
-      showToast('No clone to download', 'error');
+  // ─── Download File ZIP ───────────────────
+  function triggerDownload(jobId) {
+    if (!jobId) {
+      showToast('No project available for download.', 'error');
       return;
     }
-
     const link = document.createElement('a');
-    link.href = `/api/download/${state.currentJobId}`;
+    link.href = `/api/download/${jobId}`;
     link.download = '';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-
     showToast('Download started!', 'success');
   }
 
-  // ─── Reset ───────────────────────────────
+  // ─── On-demand Conversion for Other Formats 
+  async function downloadOtherFormat(structure) {
+    if (!state.currentJobId) {
+      showToast('No active project session.', 'error');
+      return;
+    }
+
+    // If it's normal folder
+    if (structure === 'normal') {
+      triggerDownload(state.currentJobId);
+      return;
+    }
+
+    // Check cache
+    if (state.convertedJobs[structure]) {
+      triggerDownload(state.convertedJobs[structure]);
+      return;
+    }
+
+    // Otherwise, convert on-demand
+    otherFormatsProgressArea.style.display = 'block';
+    otherLog.innerHTML = '';
+    otherBar.style.width = '0%';
+    
+    const lang = structure === 'nextjs-ts' ? 'ts' : 'js';
+    otherPhase.textContent = `Converting to Next.js (${lang.toUpperCase()})...`;
+
+    try {
+      const resp = await fetch(`/api/restructure/${state.currentJobId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lang }),
+      });
+
+      await handleSSE(resp, otherPhase, otherBar, otherLog, (event, data) => {
+        if (event === 'restructure-done') {
+          state.convertedJobs[structure] = data.downloadJobId;
+        }
+      });
+
+      otherFormatsProgressArea.style.display = 'none';
+      triggerDownload(state.convertedJobs[structure]);
+    } catch (err) {
+      showToast('Conversion failed: ' + err.message, 'error');
+      appendLogElement(otherLog, '✖ Error: ' + err.message, 'error');
+    }
+  }
+
+  // ─── Reset Application ───────────────────
   function resetApp() {
     state.pages = [];
     state.currentJobId = null;
+    state.downloadJobId = null;
+    state.convertedJobs = {};
+    state.cloneSummary = null;
+
     siteUrlInput.value = '';
     manualUrlInput.value = '';
+    $('#optNeedTidy').checked = true;
+    $('#optNoJs').checked = false;
+
+    // Reset structure selection to normal
+    structureCards.forEach(c => c.classList.remove('structure-card--active'));
+    $('#structNormalLabel').classList.add('structure-card--active');
+    document.querySelector('input[name="folderStructure"][value="normal"]').checked = true;
 
     renderPageList();
-    updateCloneButton();
+    toggleInputs(false);
 
     progressPanel.classList.remove('active');
     resultPanel.classList.remove('active');
+    otherFormatsDrawer.style.display = 'none';
 
-    // Scroll to top
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    siteUrlInput.focus();
   }
 
   // ─── Event Listeners ─────────────────────
@@ -421,12 +546,28 @@
     }
   });
 
-  cloneBtn.addEventListener('click', startClone);
-  downloadBtn.addEventListener('click', downloadZip);
+  processBtn.addEventListener('click', processProject);
+  
+  mainDownloadBtn.addEventListener('click', () => {
+    triggerDownload(state.downloadJobId);
+  });
+
+  showOtherFormatsBtn.addEventListener('click', () => {
+    if (otherFormatsDrawer.style.display === 'none') {
+      otherFormatsDrawer.style.display = 'block';
+      otherFormatsDrawer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else {
+      otherFormatsDrawer.style.display = 'none';
+    }
+  });
+
+  downloadOtherStaticBtn.addEventListener('click', () => downloadOtherFormat('normal'));
+  downloadOtherNextJsBtn.addEventListener('click', () => downloadOtherFormat('nextjs-js'));
+  downloadOtherNextTsBtn.addEventListener('click', () => downloadOtherFormat('nextjs-ts'));
+
   resetBtn.addEventListener('click', resetApp);
 
   // ─── Init ────────────────────────────────
   renderPageList();
-  updateCloneButton();
   siteUrlInput.focus();
 })();

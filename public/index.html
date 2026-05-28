@@ -22,81 +22,101 @@
       <p class="header__subtitle">Download entire Framer sites — HTML, CSS, JS, images, fonts — to work locally</p>
     </header>
 
-    <!-- Step 1: URL Input & Discovery -->
+    <!-- Redesigned Input Card -->
     <section class="card" id="inputCard">
       <div class="card__title">
-        <span class="card__title-icon">🔗</span>
-        Step 1 — Enter Your Website URL
+        <span class="card__title-icon">⚙️</span>
+        Clone & Process Configuration
       </div>
 
-      <!-- Auto-discover from sitemap -->
-      <div class="discover-row">
-        <input
-          type="url"
-          class="url-input"
-          id="siteUrl"
-          placeholder="https://your-site.framer.app"
-          spellcheck="false"
-          autocomplete="off"
-        />
-        <button class="btn btn--primary" id="discoverBtn" title="Auto-discover all pages from sitemap.xml">
-          <span id="discoverBtnText">🔍 Discover All Pages</span>
-        </button>
-      </div>
-      <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px;">
-        Auto-discovers all pages via sitemap.xml — no need to know your page list
-      </p>
-
-      <div class="divider-or">or add pages manually</div>
-
-      <!-- Manual URL add -->
-      <div class="url-input-group">
-        <input
-          type="url"
-          class="url-input"
-          id="manualUrl"
-          placeholder="https://your-site.framer.app/about"
-          spellcheck="false"
-        />
-        <button class="btn btn--secondary btn--icon" id="addUrlBtn" title="Add this URL">
-          ＋
-        </button>
-      </div>
-    </section>
-
-    <!-- Step 2: Page List -->
-    <section class="card" id="pagesCard">
-      <div class="card__title">
-        <span class="card__title-icon">📄</span>
-        Step 2 — Pages to Clone
-      </div>
-
-      <div id="pageListContainer">
-        <div class="empty-state" id="emptyState">
-          <div class="empty-state__icon">📋</div>
-          <p class="empty-state__text">No pages added yet. Discover pages or add URLs manually above.</p>
+      <!-- URL Input Section -->
+      <div class="input-section">
+        <label class="input-label" for="siteUrl">Website URL</label>
+        <div class="discover-row">
+          <input
+            type="url"
+            class="url-input"
+            id="siteUrl"
+            placeholder="https://your-site.framer.app"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <button class="btn btn--secondary" id="discoverBtn" title="Auto-discover all pages from sitemap.xml">
+            <span id="discoverBtnText">🔍 Discover Pages</span>
+          </button>
         </div>
       </div>
 
-      <div id="pageListWrapper" style="display: none;">
-        <div class="page-count">
-          <span class="page-count__number" id="pageCountNum">0</span> pages queued
+      <!-- Folder Structure Chooser -->
+      <div class="input-section" style="margin-top: 24px;">
+        <label class="input-label">Folder Structure</label>
+        <div class="structure-grid">
+          <label class="structure-card structure-card--active" id="structNormalLabel">
+            <input type="radio" name="folderStructure" value="normal" checked style="display:none;">
+            <span class="structure-card__icon">📂</span>
+            <span class="structure-card__title">Normal Folder</span>
+            <span class="structure-card__desc">Default static files (HTML, CSS, JS)</span>
+          </label>
+          <label class="structure-card" id="structNextJsLabel">
+            <input type="radio" name="folderStructure" value="nextjs-js" style="display:none;">
+            <span class="structure-card__icon">⚛️</span>
+            <span class="structure-card__title">Next.js (JS)</span>
+            <span class="structure-card__desc">Boilerplate in JavaScript (.jsx)</span>
+          </label>
+          <label class="structure-card" id="structNextTsLabel">
+            <input type="radio" name="folderStructure" value="nextjs-ts" style="display:none;">
+            <span class="structure-card__icon">⚛️</span>
+            <span class="structure-card__title">Next.js (TS)</span>
+            <span class="structure-card__desc">Boilerplate in TypeScript (.tsx)</span>
+          </label>
         </div>
-        <ul class="page-list" id="pageList"></ul>
       </div>
 
-      <!-- Options -->
-      <div class="options-row" style="margin-top: 20px;">
-        <label class="option">
-          <input type="checkbox" id="optNoJs">
-          <span class="option__label">Strip JavaScript (static snapshot)</span>
-        </label>
+      <!-- Options Section -->
+      <div class="input-section" style="margin-top: 24px;">
+        <label class="input-label">Post-Processing Options</label>
+        <div class="options-row">
+          <label class="option">
+            <input type="checkbox" id="optNeedTidy" checked>
+            <span class="option__label">🧹 Need to tidy (clean code, merge CSS, strip bloat)</span>
+          </label>
+          <label class="option">
+            <input type="checkbox" id="optNoJs">
+            <span class="option__label">🚫 Strip JavaScript (pure static snapshot)</span>
+          </label>
+        </div>
       </div>
 
-      <!-- Clone button -->
-      <div class="clone-actions" style="margin-top: 24px;">
-        <button class="btn btn--primary" id="cloneBtn" disabled>
-          <span id="cloneBtnText">🚀 Start Cloning</span>
+      <!-- Collapsible Pages List -->
+      <details class="pages-details" id="pagesCard" style="margin-top: 24px;">
+        <summary class="pages-details__summary">📄 Manage Pages to Clone (<span id="pageCountNum">0</span> queued)</summary>
+        <div class="pages-details__content" style="margin-top: 16px;">
+          <div id="pageListContainer">
+            <div class="empty-state" id="emptyState">
+              <div class="empty-state__icon">📋</div>
+              <p class="empty-state__text">No pages added yet. Enter a URL above and we will clone it. You can add more manually below.</p>
+            </div>
+          </div>
+          <div id="pageListWrapper" style="display: none;">
+            <ul class="page-list" id="pageList"></ul>
+          </div>
+          <div class="url-input-group" style="margin-top: 12px;">
+            <input
+              type="url"
+              class="url-input"
+              id="manualUrl"
+              placeholder="https://your-site.framer.app/about"
+              spellcheck="false"
+            />
+            <button class="btn btn--secondary" id="addUrlBtn" title="Add this URL">Add Page</button>
+          </div>
+        </div>
+      </details>
+
+      <!-- Action Button -->
+      <div style="margin-top: 28px;">
+        <button class="btn btn--primary" id="processBtn" style="width: 100%; font-size: 1.05rem; padding: 16px;">
+          <span id="processBtnText">🚀 Process Cloner</span>
         </button>
       </div>
     </section>
@@ -105,7 +125,7 @@
     <section class="card progress-panel" id="progressPanel">
       <div class="card__title">
         <span class="card__title-icon">⚡</span>
-        Cloning in Progress
+        Cloning & Processing
       </div>
 
       <div class="progress-phase">
@@ -124,8 +144,8 @@
     <section class="card result-panel" id="resultPanel">
       <div class="result-header">
         <div class="result-header__icon">🎉</div>
-        <h2 class="result-header__title">Clone Complete!</h2>
-        <p class="result-header__subtitle">Your website has been successfully cloned</p>
+        <h2 class="result-header__title">Processing Complete!</h2>
+        <p class="result-header__subtitle">Your project files are ready to download</p>
       </div>
 
       <div class="result-stats">
@@ -139,22 +159,64 @@
         </div>
         <div class="stat">
           <div class="stat__value" id="statSize">0</div>
-          <div class="stat__label">Total Size</div>
+          <div class="stat__label">ZIP Size</div>
         </div>
       </div>
 
-      <div class="result-pages" id="resultPages">
-        <div class="result-pages__title">Cloned Pages</div>
-        <ul class="page-list" id="resultPageList"></ul>
+      <details class="pages-details" style="margin-bottom: 24px;">
+        <summary class="pages-details__summary">📋 View Processed Files</summary>
+        <div class="pages-details__content" style="margin-top: 12px;">
+          <div class="result-pages" id="resultPages">
+            <ul class="page-list" id="resultPageList"></ul>
+          </div>
+        </div>
+      </details>
+
+      <!-- Main Download Button -->
+      <div class="download-action-container" style="text-align: center; margin-top: 24px;">
+        <button class="btn btn--success" id="mainDownloadBtn" style="width: 100%; max-width: 340px; font-size: 1.1rem; padding: 16px 32px;">
+          Download
+        </button>
       </div>
 
-      <div class="download-area">
-        <button class="btn btn--success" id="downloadBtn">
-          📥 Download as ZIP
-        </button>
-        <button class="btn btn--secondary" id="resetBtn">
-          🔄 Clone Another Site
-        </button>
+      <!-- Alternate Download/Convert Trigger -->
+      <div style="text-align: center; margin-top: 16px;">
+        <button class="btn-text-link" id="showOtherFormatsBtn">i want download other</button>
+      </div>
+
+      <!-- Hidden drawer for other formats -->
+      <div class="other-formats-drawer" id="otherFormatsDrawer" style="display: none; margin-top: 24px; border-top: 1px solid var(--border-subtle); padding-top: 24px;">
+        <h3 class="other-formats-title" style="font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 12px;">
+          Convert & Download Other Formats
+        </h3>
+        
+        <div class="other-formats-grid">
+          <button class="btn btn--secondary" id="downloadOtherStaticBtn">
+            📁 Normal Folder
+          </button>
+          <button class="btn btn--secondary" id="downloadOtherNextJsBtn">
+            ⚛️ Next.js (JS)
+          </button>
+          <button class="btn btn--secondary" id="downloadOtherNextTsBtn">
+            ⚛️ Next.js (TS)
+          </button>
+        </div>
+
+        <!-- Progress for on-demand conversion -->
+        <div id="otherFormatsProgressArea" style="display: none; margin-top: 20px;">
+          <div class="progress-phase" style="margin-bottom: 8px;">
+            <span class="progress-phase__label" id="otherPhase" style="font-size: 0.82rem; color: var(--text-accent);">Converting...</span>
+          </div>
+          <div class="progress-bar-container" style="height: 6px;">
+            <div class="progress-bar" id="otherBar"></div>
+          </div>
+          <div class="progress-log" id="otherLog" style="max-height: 120px; font-size: 0.75rem;"></div>
+        </div>
+      </div>
+
+      <!-- Start Over Action -->
+      <div style="text-align: center; margin-top: 40px; border-top: 1px solid var(--border-subtle); padding-top: 24px;">
+        <button class="btn btn--ghost" id="resetBtn">🔄 Start New Project</button>
       </div>
     </section>
   </div>
