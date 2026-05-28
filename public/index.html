@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Framer Website Cloner</title>
+  <meta name="description" content="Clone entire Framer websites to local HTML, CSS, JS, and assets">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>">
+</head>
+<body>
+  <!-- Background effects -->
+  <div class="bg-grid"></div>
+  <div class="bg-glow"></div>
+  <div class="bg-glow-bottom"></div>
+
+  <div class="app" id="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="header__icon">🌐</div>
+      <h1 class="header__title">Framer Website Cloner</h1>
+      <p class="header__subtitle">Download entire Framer sites — HTML, CSS, JS, images, fonts — to work locally</p>
+    </header>
+
+    <!-- Step 1: URL Input & Discovery -->
+    <section class="card" id="inputCard">
+      <div class="card__title">
+        <span class="card__title-icon">🔗</span>
+        Step 1 — Enter Your Website URL
+      </div>
+
+      <!-- Auto-discover from sitemap -->
+      <div class="discover-row">
+        <input
+          type="url"
+          class="url-input"
+          id="siteUrl"
+          placeholder="https://your-site.framer.app"
+          spellcheck="false"
+          autocomplete="off"
+        />
+        <button class="btn btn--primary" id="discoverBtn" title="Auto-discover all pages from sitemap.xml">
+          <span id="discoverBtnText">🔍 Discover All Pages</span>
+        </button>
+      </div>
+      <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px;">
+        Auto-discovers all pages via sitemap.xml — no need to know your page list
+      </p>
+
+      <div class="divider-or">or add pages manually</div>
+
+      <!-- Manual URL add -->
+      <div class="url-input-group">
+        <input
+          type="url"
+          class="url-input"
+          id="manualUrl"
+          placeholder="https://your-site.framer.app/about"
+          spellcheck="false"
+        />
+        <button class="btn btn--secondary btn--icon" id="addUrlBtn" title="Add this URL">
+          ＋
+        </button>
+      </div>
+    </section>
+
+    <!-- Step 2: Page List -->
+    <section class="card" id="pagesCard">
+      <div class="card__title">
+        <span class="card__title-icon">📄</span>
+        Step 2 — Pages to Clone
+      </div>
+
+      <div id="pageListContainer">
+        <div class="empty-state" id="emptyState">
+          <div class="empty-state__icon">📋</div>
+          <p class="empty-state__text">No pages added yet. Discover pages or add URLs manually above.</p>
+        </div>
+      </div>
+
+      <div id="pageListWrapper" style="display: none;">
+        <div class="page-count">
+          <span class="page-count__number" id="pageCountNum">0</span> pages queued
+        </div>
+        <ul class="page-list" id="pageList"></ul>
+      </div>
+
+      <!-- Options -->
+      <div class="options-row" style="margin-top: 20px;">
+        <label class="option">
+          <input type="checkbox" id="optNoJs">
+          <span class="option__label">Strip JavaScript (static snapshot)</span>
+        </label>
+      </div>
+
+      <!-- Clone button -->
+      <div class="clone-actions" style="margin-top: 24px;">
+        <button class="btn btn--primary" id="cloneBtn" disabled>
+          <span id="cloneBtnText">🚀 Start Cloning</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Progress Panel -->
+    <section class="card progress-panel" id="progressPanel">
+      <div class="card__title">
+        <span class="card__title-icon">⚡</span>
+        Cloning in Progress
+      </div>
+
+      <div class="progress-phase">
+        <span class="progress-phase__label" id="progressPhase">Initializing...</span>
+        <span class="progress-phase__detail" id="progressDetail"></span>
+      </div>
+
+      <div class="progress-bar-container">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+
+      <div class="progress-log" id="progressLog"></div>
+    </section>
+
+    <!-- Result Panel -->
+    <section class="card result-panel" id="resultPanel">
+      <div class="result-header">
+        <div class="result-header__icon">🎉</div>
+        <h2 class="result-header__title">Clone Complete!</h2>
+        <p class="result-header__subtitle">Your website has been successfully cloned</p>
+      </div>
+
+      <div class="result-stats">
+        <div class="stat">
+          <div class="stat__value" id="statPages">0</div>
+          <div class="stat__label">Pages</div>
+        </div>
+        <div class="stat">
+          <div class="stat__value" id="statResources">0</div>
+          <div class="stat__label">Resources</div>
+        </div>
+        <div class="stat">
+          <div class="stat__value" id="statSize">0</div>
+          <div class="stat__label">Total Size</div>
+        </div>
+      </div>
+
+      <div class="result-pages" id="resultPages">
+        <div class="result-pages__title">Cloned Pages</div>
+        <ul class="page-list" id="resultPageList"></ul>
+      </div>
+
+      <div class="download-area">
+        <button class="btn btn--success" id="downloadBtn">
+          📥 Download as ZIP
+        </button>
+        <button class="btn btn--secondary" id="resetBtn">
+          🔄 Clone Another Site
+        </button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Toast container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

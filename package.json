@@ -1,0 +1,25 @@
+{
+  "name": "framer-cloner",
+  "version": "1.0.0",
+  "description": "Clone entire Framer websites — HTML, CSS, JS, images, fonts — to work locally",
+  "main": "index.js",
+  "bin": {
+    "framer-cloner": "./index.js"
+  },
+  "scripts": {
+    "clone": "node index.js",
+    "start": "node index.js",
+    "ui": "node server.js"
+  },
+  "keywords": ["framer", "website", "clone", "download", "scraper"],
+  "license": "MIT",
+  "dependencies": {
+    "archiver": "^7.0.0",
+    "chalk": "^4.1.2",
+    "cheerio": "^1.0.0",
+    "cli-progress": "^3.12.0",
+    "express": "^4.21.0",
+    "mime-types": "^2.1.35",
+    "puppeteer": "^23.0.0"
+  }
+}
